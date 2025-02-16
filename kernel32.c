@@ -1,4 +1,4 @@
-static void test_GetLongPathNameW(void)
+static void GetLongPathNameW(void)
 {
     DWORD length, expanded;
     BOOL ret;
