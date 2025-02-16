@@ -121,4 +121,4 @@ Exit:
    return Ret;
 }
 
-refer
+BOOL WINAPI GetLastInputInfo(PLASTINPUTINFO plii)
