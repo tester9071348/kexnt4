@@ -1,0 +1,4 @@
+GetFontUnicodeRanges
+GetGlyphIndicesA
+GetGlyphIndicesW
+GetTextExtentExPointl
