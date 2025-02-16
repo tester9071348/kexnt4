@@ -136,8 +136,82 @@ BOOL WINAPI GetLastInputInfo(PLASTINPUTINFO plii)
 }
 
 BOOL WINAPI GetMonitorInfoW(
-    HMONITOR hMonitor,
-    LPMONITORINFO lpmi)
+    IN HMONITOR hMonitor,
+    OUT LPMONITORINFO pMonitorInfoUnsafe)
 {
-    return NtUserGetMonitorInfo(hMonitor, lpmi);
+    PMONITOR pMonitor;
+    MONITORINFOEXW MonitorInfo;
+    NTSTATUS Status;
+    BOOL bRet = FALSE;
+    PWCHAR pwstrDeviceName;
+
+    TRACE("Enter NtUserGetMonitorInfo\n");
+    UserEnterShared();
+
+    /* Get monitor object */
+    pMonitor = UserGetMonitorObject(hMonitor);
+    if (!pMonitor)
+    {
+        TRACE("Couldnt find monitor %p\n", hMonitor);
+        goto cleanup;
+    }
+
+    /* Check if pMonitorInfoUnsafe is valid */
+    if(pMonitorInfoUnsafe == NULL)
+    {
+        SetLastNtError(STATUS_INVALID_PARAMETER);
+        goto cleanup;
+    }
+
+    pwstrDeviceName = ((PPDEVOBJ)(pMonitor->hDev))->pGraphicsDevice->szWinDeviceName;
+
+    /* Get size of pMonitorInfoUnsafe */
+    Status = MmCopyFromCaller(&MonitorInfo.cbSize, &pMonitorInfoUnsafe->cbSize, sizeof(MonitorInfo.cbSize));
+    if (!NT_SUCCESS(Status))
+    {
+        SetLastNtError(Status);
+        goto cleanup;
+    }
+
+    /* Check if size of struct is valid */
+    if (MonitorInfo.cbSize != sizeof(MONITORINFO) &&
+        MonitorInfo.cbSize != sizeof(MONITORINFOEXW))
+    {
+        SetLastNtError(STATUS_INVALID_PARAMETER);
+        goto cleanup;
+    }
+
+    /* Fill monitor info */
+    MonitorInfo.rcMonitor = pMonitor->rcMonitor;
+    MonitorInfo.rcWork = pMonitor->rcWork;
+    MonitorInfo.dwFlags = 0;
+    if (pMonitor->IsPrimary)
+        MonitorInfo.dwFlags |= MONITORINFOF_PRIMARY;
+
+    /* Fill device name */
+    if (MonitorInfo.cbSize == sizeof(MONITORINFOEXW))
+    {
+        RtlStringCbCopyNExW(MonitorInfo.szDevice,
+                          sizeof(MonitorInfo.szDevice),
+                          pwstrDeviceName,
+                          (wcslen(pwstrDeviceName)+1) * sizeof(WCHAR),
+                          NULL, NULL, STRSAFE_FILL_BEHIND_NULL);
+    }
+
+    /* Output data */
+    Status = MmCopyToCaller(pMonitorInfoUnsafe, &MonitorInfo, MonitorInfo.cbSize);
+    if (!NT_SUCCESS(Status))
+    {
+        TRACE("GetMonitorInfo: MmCopyToCaller failed\n");
+        SetLastNtError(Status);
+        goto cleanup;
+    }
+
+    TRACE("GetMonitorInfo: success\n");
+    bRet = TRUE;
+
+cleanup:
+    TRACE("Leave NtUserGetMonitorInfo, ret=%i\n", bRet);
+    UserLeave();
+    return bRet;
 }
