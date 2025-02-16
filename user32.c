@@ -216,10 +216,96 @@ cleanup:
     return bRet;
 }
 
-HMONITOR WINAPI MonitorFromRect(
+BOOL WINAPI MonitorFromRect(
     IN LPCRECT pRect,
     IN DWORD dwFlags);
 
-HMONITOR WINAPI MonitorFromWindow(
+BOOL WINAPI MonitorFromWindow(
     IN HWND hWnd,
     IN DWORD dwFlags);
+
+BOOL WINAPI UpdateLayeredWindow(
+   HWND hwnd,
+   HDC hdcDst,
+   POINT *pptDst,
+   SIZE *psize,
+   HDC hdcSrc,
+   POINT *pptSrc,
+   COLORREF crKey,
+   BLENDFUNCTION *pblend,
+   DWORD dwFlags,
+   RECT *prcDirty)
+{
+   UPDATELAYEREDWINDOWINFO info;
+   POINT Dst, Src; 
+   SIZE Size;
+   RECT Dirty;
+   BLENDFUNCTION blend = { AC_SRC_OVER, 0, 255, 0 };
+   PWND pWnd;
+   BOOL Ret = FALSE;
+
+   TRACE("Enter UpdateLayeredWindow\n");
+   UserEnterExclusive();
+
+   if (!(pWnd = UserGetWindowObject(hwnd)))
+   {
+      goto Exit;
+   }
+
+   _SEH2_TRY
+   {
+      if (pptDst)
+      {
+         ProbeForRead(pptDst, sizeof(POINT), 1);
+         Dst = *pptDst;
+      }
+      if (pptSrc)
+      {
+         ProbeForRead(pptSrc, sizeof(POINT), 1);
+         Src = *pptSrc;
+      }
+      ProbeForRead(psize, sizeof(SIZE), 1);
+      Size = *psize;
+      if (pblend)
+      {
+         ProbeForRead(pblend, sizeof(BLENDFUNCTION), 1);
+         blend = *pblend;
+      }
+      if (prcDirty)
+      {
+         ProbeForRead(prcDirty, sizeof(RECT), 1);
+         Dirty = *prcDirty;
+      }
+   }
+   _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+   {
+      EngSetLastError( ERROR_INVALID_PARAMETER );
+      _SEH2_YIELD(goto Exit);
+   }
+   _SEH2_END;
+
+   if ( GetLayeredStatus(pWnd) ||
+        dwFlags & ~(ULW_COLORKEY | ULW_ALPHA | ULW_OPAQUE | ULW_EX_NORESIZE) ||
+       !(pWnd->ExStyle & WS_EX_LAYERED) )
+   {
+      ERR("Layered Window Invalid Parameters\n");
+      EngSetLastError( ERROR_INVALID_PARAMETER );
+      goto Exit;
+   }
+
+   info.cbSize   = sizeof(info);
+   info.hdcDst   = hdcDst;
+   info.pptDst   = pptDst? &Dst : NULL;
+   info.psize    = &Size;
+   info.hdcSrc   = hdcSrc;
+   info.pptSrc   = pptSrc ? &Src : NULL;
+   info.crKey    = crKey;
+   info.pblend   = &blend;
+   info.dwFlags  = dwFlags;
+   info.prcDirty = prcDirty ? &Dirty : NULL;
+   Ret = IntUpdateLayeredWindowI( pWnd, &info );
+Exit:
+   TRACE("Leave UpdateLayeredWindow, ret=%i\n", Ret);
+   UserLeave();
+   return Ret;
+}
