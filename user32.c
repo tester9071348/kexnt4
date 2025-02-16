@@ -11,7 +11,7 @@ BOOL WINAPI EnumDisplayMonitors(
     BOOL ret = FALSE;
 
     /* get list of monitors/rects */
-    iCount = NtUserEnumDisplayMonitors(hdc, lprcClip, NULL, NULL, 0);
+    iCount = EnumDisplayMonitors(hdc, lprcClip, NULL, NULL, 0);
     if (iCount < 0)
     {
         /* FIXME: SetLastError() */
@@ -36,7 +36,7 @@ BOOL WINAPI EnumDisplayMonitors(
         goto cleanup;
     }
 
-    iCount = NtUserEnumDisplayMonitors(hdc, lprcClip, hMonitorList, pRectList, iCount);
+    iCount = EnumDisplayMonitors(hdc, lprcClip, hMonitorList, pRectList, iCount);
     if (iCount <= 0)
     {
         /* FIXME: SetLastError() */
@@ -68,4 +68,55 @@ cleanup:
     if(pRectList)
         HeapFree(hHeap, 0, pRectList);
     return ret;
+}
+
+DWORD WINAPI GetGuiResources(HANDLE hProcess, DWORD uiFlags)
+{
+   PEPROCESS Process;
+   PPROCESSINFO W32Process;
+   NTSTATUS Status;
+   DWORD Ret = 0;
+   TRACE("Enter GetGuiResources\n");
+   UserEnterShared();
+   Status = ObReferenceObjectByHandle(hProcess,
+                                      PROCESS_QUERY_INFORMATION,
+                                      *PsProcessType,
+                                      ExGetPreviousMode(),
+                                      (PVOID*)&Process,
+                                      NULL);
+   if(!NT_SUCCESS(Status))
+   {
+      SetLastNtError(Status);
+      goto Exit; // Return 0
+   }
+   W32Process = (PPROCESSINFO)Process->Win32Process;
+   if(!W32Process)
+   {
+      ObDereferenceObject(Process);
+      EngSetLastError(ERROR_INVALID_PARAMETER);
+      goto Exit; // Return 0
+   }
+   switch(uiFlags)
+   {
+      case GR_GDIOBJECTS:
+         {
+            Ret = (DWORD)W32Process->GDIHandleCount;
+            break;
+         }
+      case GR_USEROBJECTS:
+         {
+            Ret = (DWORD)W32Process->UserHandleCount;
+            break;
+         }
+      default:
+         {
+            EngSetLastError(ERROR_INVALID_PARAMETER);
+            break;
+         }
+   }
+   ObDereferenceObject(Process);
+Exit:
+   TRACE("Leave GetGuiResources, ret=%lu\n", Ret);
+   UserLeave();
+   return Ret;
 }
