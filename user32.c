@@ -122,3 +122,15 @@ Exit:
 }
 
 BOOL WINAPI GetLastInputInfo(PLASTINPUTINFO plii)
+{
+    TRACE("%p\n", plii);
+
+    if (plii->cbSize != sizeof (*plii))
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    plii->dwTime = gpsi->dwLastRITEventTickCount;
+    return TRUE;
+}
