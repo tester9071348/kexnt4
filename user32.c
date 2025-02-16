@@ -215,3 +215,11 @@ cleanup:
     UserLeave();
     return bRet;
 }
+
+HMONITOR WINAPI MonitorFromRect(
+    IN LPCRECT pRect,
+    IN DWORD dwFlags);
+
+HMONITOR WINAPI MonitorFromWindow(
+    IN HWND hWnd,
+    IN DWORD dwFlags);
