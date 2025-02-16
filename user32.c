@@ -70,14 +70,7 @@ cleanup:
     return ret;
 }
 
-DWORD WINAPI GetGuiResources(HANDLE hProcess, DWORD uiFlags)
-{
-    return NtUserGetGuiResources(hProcess, uiFlags);
-}
-
-DWORD APIENTRY NtUserGetGuiResources(
-   HANDLE hProcess,
-   DWORD uiFlags)
+DWORD WINAPI NtUserGetGuiResources(HANDLE hProcess, DWORD uiFlags)
 {
    PEPROCESS Process;
    PPROCESSINFO W32Process;
