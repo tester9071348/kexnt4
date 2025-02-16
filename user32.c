@@ -134,3 +134,10 @@ BOOL WINAPI GetLastInputInfo(PLASTINPUTINFO plii)
     plii->dwTime = gpsi->dwLastRITEventTickCount;
     return TRUE;
 }
+
+BOOL WINAPI GetMonitorInfoW(
+    HMONITOR hMonitor,
+    LPMONITORINFO lpmi)
+{
+    return NtUserGetMonitorInfo(hMonitor, lpmi);
+}
