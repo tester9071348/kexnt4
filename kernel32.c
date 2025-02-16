@@ -1,91 +1,209 @@
-static void GetLongPathNameW(void)
+DWORD WINAPI GetLongPathNameW(IN LPCWSTR lpszShortPath,
+                 OUT LPWSTR lpszLongPath,
+                 IN DWORD cchBuffer)
 {
-    DWORD length, expanded;
-    BOOL ret;
-    HANDLE file;
-    WCHAR empty[MAX_PATH];
-    WCHAR tempdir[MAX_PATH], name[200];
-    WCHAR dirpath[4 + MAX_PATH + 200]; /* To ease removal */
-    WCHAR shortpath[4 + MAX_PATH + 200 + 1 + 200];
-    static const WCHAR prefix[] = { '\\','\\','?','\\', 0};
-    static const WCHAR backslash[] = { '\\', 0};
-    static const WCHAR letterX[] = { 'X', 0};
+    PWCHAR Path, Original, First, Last, Buffer, Src, Dst;
+    SIZE_T Length, ReturnLength;
+    WCHAR LastChar;
+    HANDLE FindHandle;
+    ULONG ErrorMode;
+    BOOLEAN Found = FALSE;
+    WIN32_FIND_DATAW FindFileData;
 
-    SetLastError(0xdeadbeef); 
-    length = GetLongPathNameW(NULL,NULL,0);
-    ok(0==length,"GetLongPathNameW returned %ld but expected 0\n",length);
-    ok(GetLastError()==ERROR_INVALID_PARAMETER,"GetLastError returned %ld but expected ERROR_INVALID_PARAMETER\n",GetLastError());
+    /* Initialize so Quickie knows there's nothing to do */
+    Buffer = Original = NULL;
+    ReturnLength = 0;
 
-    SetLastError(0xdeadbeef); 
-    empty[0]=0;
-    length = GetLongPathNameW(empty,NULL,0);
-    ok(0==length,"GetLongPathNameW returned %ld but expected 0\n",length);
-    ok(GetLastError()==ERROR_PATH_NOT_FOUND,"GetLastError returned %ld but expected ERROR_PATH_NOT_FOUND\n",GetLastError());
+    /* First check if the input path was obviously NULL */
+    if (!lpszShortPath)
+    {
+        /* Fail the request */
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
 
-    /* Create a long path name. The path needs to exist for these tests to
-     * succeed so we need the "\\?\" prefix when creating directories and
-     * files.
+    /* We will be touching removed, removable drives -- don't warn the user */
+    ErrorMode = SetErrorMode(SEM_NOOPENFILEERRORBOX | SEM_FAILCRITICALERRORS);
+
+    /* Do a simple check to see if the path exists */
+    if (GetFileAttributesW(lpszShortPath) == INVALID_FILE_ATTRIBUTES)
+    {
+        /* It doesn't, so fail */
+        ReturnLength = 0;
+        goto Quickie;
+    }
+
+    /* Now get a pointer to the actual path, skipping indicators */
+    Path = SkipPathTypeIndicator_U((LPWSTR)lpszShortPath);
+
+    /* Is there any path or filename in there? */
+    if (!(Path) ||
+        (*Path == UNICODE_NULL) ||
+        !(FindLFNorSFN_U(Path, &First, &Last, FALSE)))
+    {
+        /* There isn't, so the long path is simply the short path */
+        ReturnLength = wcslen(lpszShortPath);
+
+        /* Is there space for it? */
+        if ((cchBuffer > ReturnLength) && (lpszLongPath))
+        {
+            /* Make sure the pointers aren't already the same */
+            if (lpszLongPath != lpszShortPath)
+            {
+                /* They're not -- copy the short path into the long path */
+                RtlMoveMemory(lpszLongPath,
+                              lpszShortPath,
+                              ReturnLength * sizeof(WCHAR) + sizeof(UNICODE_NULL));
+            }
+        }
+        else
+        {
+            /* Otherwise, let caller know we need a bigger buffer, include NULL */
+            ReturnLength++;
+        }
+        goto Quickie;
+    }
+
+    /* We are still in the game -- compute the current size */
+    Length = wcslen(lpszShortPath) + sizeof(ANSI_NULL);
+    Original = RtlAllocateHeap(RtlGetProcessHeap(), 0, Length * sizeof(WCHAR));
+    if (!Original) goto ErrorQuickie;
+
+    /* Make a copy of it */
+    RtlMoveMemory(Original, lpszShortPath, Length * sizeof(WCHAR));
+
+    /* Compute the new first and last markers */
+    First = &Original[First - lpszShortPath];
+    Last = &Original[Last - lpszShortPath];
+
+    /* Set the current destination pointer for a copy */
+    Dst = lpszLongPath;
+
+    /*
+     * Windows allows the paths to overlap -- we have to be careful with this and
+     * see if it's same to do so, and if not, allocate our own internal buffer
+     * that we'll return at the end.
+     *
+     * This is also why we use RtlMoveMemory everywhere. Don't use RtlCopyMemory!
      */
-    name[0] = 0;
-    while (lstrlenW(name) < (ARRAY_SIZE(name) - 1))
-        lstrcatW(name, letterX);
-
-    GetTempPathW(MAX_PATH, tempdir);
-
-    lstrcpyW(shortpath, prefix);
-    lstrcatW(shortpath, tempdir);
-    lstrcatW(shortpath, name);
-    lstrcpyW(dirpath, shortpath);
-    ret = CreateDirectoryW(shortpath, NULL);
-    ok(ret, "Could not create the temporary directory : %ld\n", GetLastError());
-    lstrcatW(shortpath, backslash);
-    lstrcatW(shortpath, name);
-
-    /* Path does not exist yet and we know it overruns MAX_PATH */
-
-    /* No prefix */
-    SetLastError(0xdeadbeef);
-    length = GetLongPathNameW(shortpath + 4, NULL, 0);
-    ok(length == 0, "Expected 0, got %ld\n", length);
-    todo_wine
-    ok(GetLastError() == ERROR_PATH_NOT_FOUND,
-       "Expected ERROR_PATH_NOT_FOUND, got %ld\n", GetLastError());
-    /* With prefix */
-    SetLastError(0xdeadbeef);
-    length = GetLongPathNameW(shortpath, NULL, 0);
-    todo_wine
+    if ((cchBuffer) && (lpszLongPath) &&
+        (((lpszLongPath >= lpszShortPath) && (lpszLongPath < &lpszShortPath[Length])) ||
+         ((lpszLongPath < lpszShortPath) && (&lpszLongPath[cchBuffer] >= lpszShortPath))))
     {
-    ok(length == 0, "Expected 0, got %ld\n", length);
-    ok(GetLastError() == ERROR_FILE_NOT_FOUND,
-       "Expected ERROR_PATH_NOT_FOUND, got %ld\n", GetLastError());
+        Buffer = RtlAllocateHeap(RtlGetProcessHeap(), 0, cchBuffer * sizeof(WCHAR));
+        if (!Buffer) goto ErrorQuickie;
+
+        /* New destination */
+        Dst = Buffer;
     }
 
-    file = CreateFileW(shortpath, GENERIC_READ|GENERIC_WRITE, 0, NULL,
-                       CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    ok(file != INVALID_HANDLE_VALUE,
-       "Could not create the temporary file : %ld.\n", GetLastError());
-    CloseHandle(file);
-
-    /* Path exists */
-
-    /* No prefix */
-    SetLastError(0xdeadbeef);
-    length = GetLongPathNameW(shortpath + 4, NULL, 0);
-    todo_wine
+    /* Prepare for the loop */
+    Src = Original;
+    ReturnLength = 0;
+    while (TRUE)
     {
-    ok(length == 0, "Expected 0, got %ld\n", length);
-    ok(GetLastError() == ERROR_PATH_NOT_FOUND, "Expected ERROR_PATH_NOT_FOUND, got %ld\n", GetLastError());
+        /* Current delta in the loop */
+        Length = First - Src;
+
+        /* Update the return length by it */
+        ReturnLength += Length;
+
+        /* Is there a delta? If so, is there space and buffer for it? */
+        if ((Length) && (cchBuffer > ReturnLength) && (lpszLongPath))
+        {
+            RtlMoveMemory(Dst, Src, Length * sizeof(WCHAR));
+            Dst += Length;
+        }
+
+        /* "Terminate" this portion of the path's substring so we can do a find */
+        LastChar = *Last;
+        *Last = UNICODE_NULL;
+        FindHandle = FindFirstFileW(Original, &FindFileData);
+        *Last = LastChar;
+
+        /* This portion wasn't found, so fail */
+        if (FindHandle == INVALID_HANDLE_VALUE)
+        {
+            ReturnLength = 0;
+            break;
+        }
+
+        /* Close the find handle */
+        FindClose(FindHandle);
+
+        /* Now check the length of the long name */
+        Length = wcslen(FindFileData.cFileName);
+        if (Length)
+        {
+            /* This is our new first marker */
+            First = FindFileData.cFileName;
+        }
+        else
+        {
+            /* Otherwise, the name is the delta between our current markers */
+            Length = Last - First;
+        }
+
+        /* Update the return length with the short name length, if any */
+        ReturnLength += Length;
+
+        /* Once again check for appropriate space and buffer */
+        if ((cchBuffer > ReturnLength) && (lpszLongPath))
+        {
+            /* And do the copy if there is */
+            RtlMoveMemory(Dst, First, Length * sizeof(WCHAR));
+            Dst += Length;
+        }
+
+        /* Now update the source pointer */
+        Src = Last;
+        if (*Src == UNICODE_NULL) break;
+
+        /* Are there more names in there? */
+        Found = FindLFNorSFN_U(Src, &First, &Last, FALSE);
+        if (!Found) break;
     }
-    /* With prefix */
-    expanded = 4 + (GetLongPathNameW(tempdir, NULL, 0) - 1) + lstrlenW(name) + 1 + lstrlenW(name) + 1;
-    SetLastError(0xdeadbeef);
-    length = GetLongPathNameW(shortpath, NULL, 0);
-    ok(length == expanded, "Expected %ld, got %ld\n", expanded, length);
 
-    /* NULL buffer with length crashes on Windows */
-    if (0)
-        GetLongPathNameW(shortpath, NULL, 20);
+    /* The loop is done, is there anything left? */
+    if (ReturnLength)
+    {
+        /* Get the length of the straggling path */
+        Length = wcslen(Src);
+        ReturnLength += Length;
 
-    ok(DeleteFileW(shortpath), "Could not delete temporary file\n");
-    ok(RemoveDirectoryW(dirpath), "Could not delete temporary directory\n");
+        /* Once again check for appropriate space and buffer */
+        if ((cchBuffer > ReturnLength) && (lpszLongPath))
+        {
+            /* And do the copy if there is -- accounting for NULL here */
+            RtlMoveMemory(Dst, Src, Length * sizeof(WCHAR) + sizeof(UNICODE_NULL));
+
+            /* What about our buffer? */
+            if (Buffer)
+            {
+                /* Copy it into the caller's long path */
+                RtlMoveMemory(lpszLongPath,
+                              Buffer,
+                              ReturnLength * sizeof(WCHAR)  + sizeof(UNICODE_NULL));
+            }
+        }
+        else
+        {
+            /* Buffer is too small, let the caller know, making space for NULL */
+            ReturnLength++;
+        }
+    }
+
+    /* We're all done */
+    goto Quickie;
+
+ErrorQuickie:
+    /* This is the goto for memory failures */
+    SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+
+Quickie:
+    /* General function end: free memory, restore error mode, return length */
+    if (Original) RtlFreeHeap(RtlGetProcessHeap(), 0, Original);
+    if (Buffer) RtlFreeHeap(RtlGetProcessHeap(), 0, Buffer);
+    SetErrorMode(ErrorMode);
+    return ReturnLength;
 }
