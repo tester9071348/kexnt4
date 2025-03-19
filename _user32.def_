@@ -1,0 +1,7 @@
+EnumDisplayMonitors
+GetGuiResources
+GetLastInputInfo
+GetMonitorInfoW
+MonitorFromRect
+MonitorFromWindow
+UpdateLayeredWindow
